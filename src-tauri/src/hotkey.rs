@@ -174,3 +174,27 @@ fn parse_virtual_key(key: &str) -> Result<u16, HotkeyError> {
 
     Ok(code as u16)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_virtual_key;
+
+    #[test]
+    fn parses_page_down_aliases() {
+        let a = parse_virtual_key("PageDown").unwrap();
+        let b = parse_virtual_key("pgdn").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn parses_letter_keys_case_insensitive() {
+        let a = parse_virtual_key("a").unwrap();
+        let b = parse_virtual_key("A").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn rejects_unknown_key() {
+        assert!(parse_virtual_key("not-a-key").is_err());
+    }
+}

@@ -7,10 +7,12 @@ use std::{
 use futures_util::StreamExt;
 use serde::Serialize;
 use thiserror::Error;
-use tokio::process::Command;
+use tokio::process::Command as AsyncCommand;
 
 const TINY_EN_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin";
+const TINY_EN_MODEL_SHA256_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin.sha256";
 const MIN_MODEL_BYTES: u64 = 30 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,7 +57,9 @@ impl WhisperEngine {
     where
         F: FnMut(ModelDownloadProgress) -> Result<(), WhisperError>,
     {
-        if self.model_is_valid()? {
+        let expected_sha256 = self.fetch_expected_sha256().await?;
+
+        if self.model_is_valid(&expected_sha256)? {
             on_progress(ModelDownloadProgress {
                 downloaded_bytes: 1,
                 total_bytes: Some(1),
@@ -73,7 +77,7 @@ impl WhisperEngine {
             let _ = fs::remove_file(&partial);
         }
 
-        self.download_model(&mut on_progress).await?;
+        self.download_model(&expected_sha256, &mut on_progress).await?;
         Ok(true)
     }
 
@@ -93,7 +97,11 @@ impl WhisperEngine {
         self.transcribe_with_binary(_wav_path).await
     }
 
-    async fn download_model<F>(&self, on_progress: &mut F) -> Result<(), WhisperError>
+    async fn download_model<F>(
+        &self,
+        expected_sha256: &str,
+        on_progress: &mut F,
+    ) -> Result<(), WhisperError>
     where
         F: FnMut(ModelDownloadProgress) -> Result<(), WhisperError>,
     {
@@ -149,6 +157,13 @@ impl WhisperEngine {
                 "downloaded model appears corrupted (file too small)".to_string(),
             ));
         }
+        let actual_sha256 = file_sha256_hex(&partial)?;
+        if actual_sha256 != expected_sha256 {
+            let _ = fs::remove_file(&partial);
+            return Err(WhisperError::DownloadFailed(format!(
+                "model checksum mismatch: expected {expected_sha256}, got {actual_sha256}"
+            )));
+        }
 
         fs::rename(&partial, &self.model_path)?;
         on_progress(ModelDownloadProgress {
@@ -164,7 +179,7 @@ impl WhisperEngine {
         let output_txt = output_prefix.with_extension("txt");
         let _ = fs::remove_file(&output_txt);
 
-        let output = Command::new(&self.binary_path)
+        let output = AsyncCommand::new(&self.binary_path)
             .arg("-m")
             .arg(&self.model_path)
             .arg("-f")
@@ -210,13 +225,31 @@ impl WhisperEngine {
         self.model_path.with_extension("bin.part")
     }
 
-    fn model_is_valid(&self) -> Result<bool, WhisperError> {
+    fn model_is_valid(&self, expected_sha256: &str) -> Result<bool, WhisperError> {
         if !self.model_path.exists() {
             return Ok(false);
         }
 
         let size = fs::metadata(&self.model_path)?.len();
-        Ok(size >= MIN_MODEL_BYTES)
+        if size < MIN_MODEL_BYTES {
+            return Ok(false);
+        }
+
+        let actual_sha256 = file_sha256_hex(&self.model_path)?;
+        Ok(actual_sha256 == expected_sha256)
+    }
+
+    async fn fetch_expected_sha256(&self) -> Result<String, WhisperError> {
+        let body = reqwest::get(TINY_EN_MODEL_SHA256_URL)
+            .await
+            .map_err(|err| WhisperError::DownloadFailed(err.to_string()))?
+            .text()
+            .await
+            .map_err(|err| WhisperError::DownloadFailed(err.to_string()))?;
+
+        parse_sha256_hex(&body).ok_or_else(|| {
+            WhisperError::DownloadFailed("invalid checksum response format".to_string())
+        })
     }
 }
 
@@ -274,4 +307,64 @@ fn extract_transcript_from_stdout(stdout: &str) -> String {
     }
 
     parts.join(" ").trim().to_string()
+}
+
+fn file_sha256_hex(path: &Path) -> Result<String, WhisperError> {
+    let output = std::process::Command::new("certutil")
+        .args(["-hashfile", &path.display().to_string(), "SHA256"])
+        .output()
+        .map_err(|err| WhisperError::DownloadFailed(err.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(WhisperError::DownloadFailed(if stderr.is_empty() {
+            "failed to calculate model checksum".to_string()
+        } else {
+            stderr
+        }));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_sha256_hex(&stdout).ok_or_else(|| {
+        WhisperError::DownloadFailed("failed to parse model checksum output".to_string())
+    })
+}
+
+fn parse_sha256_hex(input: &str) -> Option<String> {
+    let token = input
+        .split_whitespace()
+        .find(|part| part.len() == 64 && part.chars().all(|ch| ch.is_ascii_hexdigit()))?;
+    Some(token.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sha256_hex;
+
+    #[test]
+    fn parses_sha256_plain_line() {
+        let v = parse_sha256_hex(
+            "a52f3d4f5f345c3717fcb07fef7cfeb2a95b7ad7fb4a27d8f9f7f4054ca11f44",
+        );
+        assert_eq!(
+            v.as_deref(),
+            Some("a52f3d4f5f345c3717fcb07fef7cfeb2a95b7ad7fb4a27d8f9f7f4054ca11f44")
+        );
+    }
+
+    #[test]
+    fn parses_sha256_with_filename() {
+        let v = parse_sha256_hex(
+            "a52f3d4f5f345c3717fcb07fef7cfeb2a95b7ad7fb4a27d8f9f7f4054ca11f44  ggml-tiny.en.bin",
+        );
+        assert_eq!(
+            v.as_deref(),
+            Some("a52f3d4f5f345c3717fcb07fef7cfeb2a95b7ad7fb4a27d8f9f7f4054ca11f44")
+        );
+    }
+
+    #[test]
+    fn rejects_non_hex_checksum() {
+        assert!(parse_sha256_hex("not-a-checksum").is_none());
+    }
 }

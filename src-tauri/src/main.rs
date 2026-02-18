@@ -8,6 +8,7 @@ mod audio;
 mod hotkey;
 mod inject;
 mod settings;
+mod startup;
 mod whisper;
 
 use audio::AudioRecorder;
@@ -49,13 +50,16 @@ struct TranscriptionRun {
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     let manager = state.settings.lock().await;
-    manager.load().map_err(|err| err.to_string())
+    let settings = manager.load().map_err(|err| err.to_string())?;
+    startup::sync_startup(settings.start_with_windows).map_err(|err| err.to_string())?;
+    Ok(settings)
 }
 
 #[tauri::command]
 async fn update_settings(state: State<'_, AppState>, settings: AppSettings) -> Result<(), String> {
     let manager = state.settings.lock().await;
-    manager.save(&settings).map_err(|err| err.to_string())
+    manager.save(&settings).map_err(|err| err.to_string())?;
+    startup::sync_startup(settings.start_with_windows).map_err(|err| err.to_string())
 }
 
 #[tauri::command]

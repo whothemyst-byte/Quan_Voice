@@ -123,3 +123,41 @@ pub mod text {
             .to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_settings, text, AppSettings};
+
+    #[test]
+    fn sanitize_restores_defaults_for_empty_values() {
+        let input = AppSettings {
+            push_to_talk_key: "  ".to_string(),
+            auto_punctuation: false,
+            model: "".to_string(),
+            start_with_windows: false,
+            input_device: " ".to_string(),
+        };
+
+        let out = sanitize_settings(input);
+        assert_eq!(out.push_to_talk_key, "RightCtrl");
+        assert_eq!(out.model, "tiny.en");
+        assert_eq!(out.input_device, "Default");
+    }
+
+    #[test]
+    fn sanitize_forces_supported_model() {
+        let input = AppSettings {
+            model: "base.en".to_string(),
+            ..AppSettings::default()
+        };
+
+        let out = sanitize_settings(input);
+        assert_eq!(out.model, "tiny.en");
+    }
+
+    #[test]
+    fn clean_transcript_trims_lines_and_outer_whitespace() {
+        let cleaned = text::clean_transcript("  hello  \r\nworld   \n\n");
+        assert_eq!(cleaned, "hello\nworld");
+    }
+}

@@ -20,7 +20,7 @@ export default function SettingsPage({ settings, inputDevices, onChange, onSave,
     if (code === "Home") return "Home";
     if (code === "End") return "End";
     if (code === "PageUp") return "PageUp";
-    if (code === "PageDown") return "Down";
+    if (code === "PageDown") return "PageDown";
     if (code === "ArrowUp") return "Up";
     if (code === "ArrowDown") return "Down";
     if (code === "ArrowLeft") return "Left";
