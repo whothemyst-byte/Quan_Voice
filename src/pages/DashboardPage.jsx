@@ -13,6 +13,24 @@ const fallbackSettings = {
 };
 
 /* ── SVG Icons ──────────────────────────────────────────────── */
+const initialProgress = {
+  downloaded_bytes: 0,
+  total_bytes: null,
+  progress_percent: 0,
+};
+
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || bytes < 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
 const MicSvg = () => (
   <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11h-2Z"/></svg>
 );
@@ -40,6 +58,20 @@ const LockSvg = () => (
 export default function DashboardPage() {
   const [settings, setSettings] = useState(fallbackSettings);
   const [inputDevices, setInputDevices] = useState(["Default"]);
+  const [availableModels, setAvailableModels] = useState([
+    {
+      id: "tiny.en",
+      label: "tiny.en (Fastest)",
+      approx_download_mb: 75,
+      perf_warning: "Fastest and lightest option for most PCs.",
+    },
+  ]);
+  const [persistedModel, setPersistedModel] = useState("tiny.en");
+  const [pendingModelConfirm, setPendingModelConfirm] = useState(null);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(initialProgress);
+  const [downloadError, setDownloadError] = useState("");
+  const [downloadCompleted, setDownloadCompleted] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [status, setStatus] = useState("Inactive");
   const [activated, setActivated] = useState(false);
@@ -54,18 +86,30 @@ export default function DashboardPage() {
 
     async function loadSettings() {
       try {
+        const models = await invoke("list_available_models");
         const devices = await invoke("list_input_devices");
         const loaded = await invoke("get_settings");
         let nextSettings = loaded;
-        if (Array.isArray(devices) && devices.length > 0) {
-          setInputDevices(devices);
-          const selected = loaded.input_device || "Default";
-          if (!devices.includes(selected)) {
-            nextSettings = { ...loaded, input_device: "Default" };
-            await invoke("update_settings", { settings: nextSettings });
+        if (Array.isArray(models) && models.length > 0) {
+          setAvailableModels(models);
+          const selectedModel = loaded.model || "tiny.en";
+          const modelExists = models.some((model) => model.id === selectedModel);
+          if (!modelExists) {
+            nextSettings = { ...nextSettings, model: models[0].id };
           }
         }
+        if (Array.isArray(devices) && devices.length > 0) {
+          setInputDevices(devices);
+          const selected = nextSettings.input_device || "Default";
+          if (!devices.includes(selected)) {
+            nextSettings = { ...nextSettings, input_device: "Default" };
+          }
+        }
+        if (nextSettings !== loaded) {
+          await invoke("update_settings", { settings: nextSettings });
+        }
         setSettings(nextSettings);
+        setPersistedModel(nextSettings.model || "tiny.en");
       } catch (error) {
         setSaveState(`error:${String(error)}`);
       }
@@ -104,10 +148,46 @@ export default function DashboardPage() {
     if (saveState !== "idle") setSaveState("idle");
   }
 
-  async function handleSaveSettings() {
+  async function runModelDownload() {
+    setDownloadError("");
+    setDownloadCompleted(false);
+    setDownloadProgress(initialProgress);
+    setShowDownloadModal(true);
+    let unlistenProgress;
+
     try {
+      unlistenProgress = await listen("model-download-progress", (event) => {
+        setDownloadProgress(event.payload ?? initialProgress);
+      });
+      await invoke("ensure_model_ready");
+      setDownloadCompleted(true);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      setShowDownloadModal(false);
+    } catch (error) {
+      setDownloadError(String(error));
+      throw error;
+    } finally {
+      if (unlistenProgress) {
+        unlistenProgress();
+      }
+    }
+  }
+
+  async function persistSettings({ forceModelConfirm = false } = {}) {
+    try {
+      const modelChanged = settings.model !== persistedModel;
+      const selectedModel = availableModels.find((item) => item.id === settings.model);
+      if (modelChanged && selectedModel && selectedModel.id !== "tiny.en" && !forceModelConfirm) {
+        setPendingModelConfirm(selectedModel);
+        return;
+      }
+
       setSaveState("saving");
       await invoke("update_settings", { settings });
+      if (modelChanged) {
+        await runModelDownload();
+      }
+      setPersistedModel(settings.model);
       setSaveState("saved");
       if (activated) {
         await invoke("register_hotkey");
@@ -116,6 +196,19 @@ export default function DashboardPage() {
     } catch (error) {
       setSaveState(`error:${String(error)}`);
     }
+  }
+
+  function handleSaveSettings() {
+    void persistSettings();
+  }
+
+  function handleConfirmModelSwitch() {
+    setPendingModelConfirm(null);
+    void persistSettings({ forceModelConfirm: true });
+  }
+
+  function handleCancelModelSwitch() {
+    setPendingModelConfirm(null);
   }
 
   async function handleToggleActivation() {
@@ -143,6 +236,12 @@ export default function DashboardPage() {
 
   const isListening = status === "Listening";
   const statusLabel = isListening ? "Listening…" : activated ? "Ready to Listen" : "Inactive";
+  const downloadPercent = Math.max(0, Math.min(100, downloadProgress?.progress_percent ?? 0));
+  const downloaded = formatBytes(downloadProgress?.downloaded_bytes ?? 0);
+  const total =
+    downloadProgress?.total_bytes == null
+      ? "unknown size"
+      : formatBytes(downloadProgress.total_bytes);
 
   return (
     <div className="app-shell">
@@ -258,6 +357,7 @@ export default function DashboardPage() {
             <SettingsPage
               settings={settings}
               inputDevices={inputDevices}
+              availableModels={availableModels}
               onChange={handleSettingChange}
               onSave={handleSaveSettings}
               saveState={saveState}
@@ -265,6 +365,61 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+
+      {pendingModelConfirm ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <h3>Switch Model?</h3>
+            <p>
+              {pendingModelConfirm.label} will be downloaded (~{pendingModelConfirm.approx_download_mb} MB).
+            </p>
+            <p className="modal-note">{pendingModelConfirm.perf_warning}</p>
+            <div className="modal-actions">
+              <button className="btn-secondary" type="button" onClick={handleCancelModelSwitch}>
+                Cancel
+              </button>
+              <button className="primary-btn" type="button" onClick={handleConfirmModelSwitch}>
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showDownloadModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <h3>{downloadCompleted ? "Download Complete" : "Downloading Model..."}</h3>
+            <p>
+              {downloadCompleted
+                ? "Selected model is ready to use."
+                : "Preparing selected speech model."}
+            </p>
+            {downloadCompleted ? (
+              <p className="success-text">Model downloaded successfully.</p>
+            ) : (
+              <>
+                <div className="progress-track" aria-label="Model download progress">
+                  <div className="progress-fill" style={{ width: `${downloadPercent}%` }} />
+                </div>
+                <p className="progress-meta">
+                  {downloadPercent.toFixed(1)}% ({downloaded} / {total})
+                </p>
+              </>
+            )}
+            {downloadError ? (
+              <>
+                <div className="error-banner">{downloadError}</div>
+                <div className="modal-actions">
+                  <button className="btn-secondary" type="button" onClick={() => setShowDownloadModal(false)}>
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

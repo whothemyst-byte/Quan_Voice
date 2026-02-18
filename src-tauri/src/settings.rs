@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf};
 
+use crate::whisper;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -100,9 +101,9 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
         settings.push_to_talk_key = "RightCtrl".to_string();
     }
     if settings.model.trim().is_empty() {
-        settings.model = "tiny.en".to_string();
-    } else if settings.model != "tiny.en" {
-        settings.model = "tiny.en".to_string();
+        settings.model = whisper::fallback_model_id().to_string();
+    } else if !whisper::is_phase_one_model(&settings.model) {
+        settings.model = whisper::fallback_model_id().to_string();
     }
     if settings.input_device.trim().is_empty() {
         settings.input_device = "Default".to_string();
@@ -145,9 +146,20 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_forces_supported_model() {
+    fn sanitize_keeps_phase_one_model() {
         let input = AppSettings {
             model: "base.en".to_string(),
+            ..AppSettings::default()
+        };
+
+        let out = sanitize_settings(input);
+        assert_eq!(out.model, "base.en");
+    }
+
+    #[test]
+    fn sanitize_falls_back_for_unsupported_model() {
+        let input = AppSettings {
+            model: "medium.en".to_string(),
             ..AppSettings::default()
         };
 

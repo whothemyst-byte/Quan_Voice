@@ -1,5 +1,14 @@
-export default function SettingsPage({ settings, inputDevices, onChange, onSave, saveState }) {
+export default function SettingsPage({
+  settings,
+  inputDevices,
+  availableModels,
+  onChange,
+  onSave,
+  saveState,
+}) {
   const isSaving = saveState === "saving";
+  const selectedModel =
+    (availableModels || []).find((model) => model.id === settings.model) || null;
 
   function normalizeHotkey(event) {
     const { code, key } = event;
@@ -72,8 +81,17 @@ export default function SettingsPage({ settings, inputDevices, onChange, onSave,
             value={settings.model}
             onChange={(event) => onChange("model", event.target.value)}
           >
-            <option value="tiny.en">tiny.en (Free)</option>
+            {(availableModels || []).map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}
+              </option>
+            ))}
           </select>
+          {selectedModel ? (
+            <small className="field-note">
+              Download: ~{selectedModel.approx_download_mb} MB. {selectedModel.perf_warning}
+            </small>
+          ) : null}
         </label>
 
         <label className="field">

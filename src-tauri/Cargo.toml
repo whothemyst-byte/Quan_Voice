@@ -1,6 +1,6 @@
 [package]
 name = "quan-voice"
-version = "0.1.0"
+version = "0.1.1"
 description = "Quan Voice - Offline Voice. Unlimited Focus."
 authors = ["Quan Voice Team"]
 license = "Proprietary"

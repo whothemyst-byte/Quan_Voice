@@ -66,14 +66,23 @@ async fn update_settings(state: State<'_, AppState>, settings: AppSettings) -> R
 
 #[tauri::command]
 async fn ensure_model_ready(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let model = {
+        let manager = state.settings.lock().await;
+        manager.load().map_err(|err| err.to_string())?.model
+    };
     let mut whisper = state.whisper.lock().await;
     whisper
-        .ensure_model_exists(|progress| {
+        .ensure_model_exists(&model, |progress| {
             app.emit("model-download-progress", progress)
                 .map_err(|err| whisper::WhisperError::DownloadFailed(err.to_string()))
         })
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn list_available_models() -> Vec<whisper::AvailableModel> {
+    whisper::list_phase_one_models()
 }
 
 #[tauri::command]
@@ -91,6 +100,7 @@ async fn register_hotkey(app: tauri::AppHandle, state: State<'_, AppState>) -> R
     let audio_for_release = Arc::clone(&state.audio);
     let whisper_for_release = Arc::clone(&state.whisper);
     let injector_for_release = Arc::clone(&state.injector);
+    let settings_for_release = Arc::clone(&state.settings);
     let workflow_for_release = Arc::clone(&state.workflow);
     let recording_flag_for_press = Arc::clone(&state.recording_flag);
     let recording_flag_for_release = Arc::clone(&state.recording_flag);
@@ -142,6 +152,7 @@ async fn register_hotkey(app: tauri::AppHandle, state: State<'_, AppState>) -> R
                 let audio = Arc::clone(&audio_for_release);
                 let whisper = Arc::clone(&whisper_for_release);
                 let injector = Arc::clone(&injector_for_release);
+                let settings = Arc::clone(&settings_for_release);
                 let workflow = Arc::clone(&workflow_for_release);
                 let recording_flag = Arc::clone(&recording_flag_for_release);
                 let live = Arc::clone(&live_for_release);
@@ -149,7 +160,7 @@ async fn register_hotkey(app: tauri::AppHandle, state: State<'_, AppState>) -> R
                 tauri::async_runtime::spawn(async move {
                     recording_flag.store(false, Ordering::Relaxed);
                     let _guard = workflow.lock().await;
-                    let outcome = transcribe_and_inject(audio, whisper, injector).await;
+                    let outcome = transcribe_and_inject(audio, whisper, injector, settings).await;
                     if let Ok(mut guard) = live.lock() {
                         guard.status = "Idle".to_string();
                         guard.input_level = 0.0;
@@ -256,6 +267,7 @@ async fn stop_recording_and_inject(state: State<'_, AppState>) -> Result<String,
         Arc::clone(&state.audio),
         Arc::clone(&state.whisper),
         Arc::clone(&state.injector),
+        Arc::clone(&state.settings),
     )
     .await?;
     Ok(run.cleaned)
@@ -306,6 +318,7 @@ fn main() {
             start_floating_drag,
             get_live_state,
             set_live_ready,
+            list_available_models,
             list_input_devices,
             start_recording,
             stop_recording_and_inject
@@ -318,7 +331,13 @@ async fn transcribe_and_inject(
     audio: Arc<Mutex<AudioRecorder>>,
     whisper: Arc<Mutex<WhisperEngine>>,
     injector: Arc<Mutex<TextInjector>>,
+    settings: Arc<Mutex<SettingsManager>>,
 ) -> Result<TranscriptionRun, String> {
+    let selected_model = {
+        let manager = settings.lock().await;
+        manager.load().map_err(|err| err.to_string())?.model
+    };
+
     let (audio_path, device_name) = {
         let mut recorder = audio.lock().await;
         let device_name = recorder
@@ -339,7 +358,7 @@ async fn transcribe_and_inject(
     let raw_text = {
         let engine = whisper.lock().await;
         engine
-            .transcribe(audio_path.as_path())
+            .transcribe(audio_path.as_path(), &selected_model)
             .await
             .map_err(|err| err.to_string())?
     };
