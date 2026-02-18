@@ -1,27 +1,50 @@
-﻿## Quan Voice `v1.0.0`
+﻿# Quan Voice Release Notes
 
-Production release of Quan Voice for Windows.
+## v1.0.0 (Production)
 
-### What's included
-- Desktop app with floating mic workflow
-- Dashboard and settings screens
-- Secure model download/setup flow with checksum verification
-- Push-to-talk hotkey flow and text injection
-- Windows startup toggle support from Settings
+Release date: February 18, 2026
 
-### Install (Windows x64)
-1. Download `Quan Voice_1.0.0_x64-setup.exe` from the release assets.
-2. Run the installer.
-3. If Windows SmartScreen appears, click **More info** -> **Run anyway**.
-4. Launch **Quan Voice** from Start Menu or desktop shortcut.
-5. On first launch, allow microphone permission if prompted.
+### Highlights
+- Offline voice typing workflow for Windows desktop
+- Push-to-talk activation with cross-app text injection
+- Floating widget with live status and drag support
+- Local model bootstrap flow with checksum-aware validation path
+- Settings persistence and startup toggle support
 
-### Notes
-- Requires Windows x64.
-- All speech processing runs locally on device after model setup.
+### Included in this release
+- Desktop app build and NSIS installer
+- Main dashboard and settings experience
+- Input device selection and saved preferences
+- Model setup/download progress UI
+- Hotkey registration/unregistration flow
 
-### Need help
-If something breaks, open an issue with:
+### Stability and UX fixes shipped
+- Removed production debug transcript telemetry line from dashboard UI
+- Removed terminal flashing by running helper subprocesses in hidden mode
+- Added native floating-window drag command and wired widget drag handling
+- Hardened checksum parsing to support more upstream response formats
+
+### Security and reliability notes
+- CSP enabled for desktop webview
+- Model file validity checks include size gate and checksum path (when available)
+- Corrupt settings file recovery with fallback defaults
+
+### Installer
+- File: `Quan Voice_0.1.0_x64-setup.exe`
+- Platform: Windows x64
+
+### Upgrade steps
+1. Close Quan Voice completely.
+2. Run the latest installer over the existing install.
+3. Launch app and verify hotkey, input device, and widget behavior.
+
+### Known limitations
+- First-run model setup requires internet access.
+- Current automated coverage is backend-focused; UI E2E automation is not yet included.
+
+### Support
+When reporting issues, include:
 - Windows version
-- Steps to reproduce
-- Any logs/screenshots
+- Microphone device name
+- Reproduction steps
+- Screenshot or short screen recording (if applicable)
