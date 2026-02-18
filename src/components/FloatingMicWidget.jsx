@@ -11,22 +11,24 @@ export default function FloatingMicWidget({ status, level, onDrag }) {
   return (
     <div
       className={`floating-mic${isLive ? " live" : ""}`}
+      data-tauri-drag-region
+      onPointerDown={onDrag}
       onMouseDown={onDrag}
     >
       {/* Drag handle */}
-      <div className="floating-drag-handle">
+      <div className="floating-drag-handle" data-tauri-drag-region onPointerDown={onDrag}>
         <span />
         <span />
         <span />
       </div>
 
       {/* Mic icon */}
-      <div className="floating-mic-icon">
+      <div className="floating-mic-icon" data-tauri-drag-region onPointerDown={onDrag}>
         <MicSvg />
       </div>
 
       {/* Waveform bars */}
-      <div className="floating-mic-wave">
+      <div className="floating-mic-wave" data-tauri-drag-region onPointerDown={onDrag}>
         {Array.from({ length: BAR_COUNT }, (_, i) => {
           const weights = [0.4, 0.7, 1.0, 0.7, 0.4];
           const h = isLive ? 4 + safeLevel * 14 * weights[i] : 4;
@@ -35,7 +37,7 @@ export default function FloatingMicWidget({ status, level, onDrag }) {
       </div>
 
       {/* Label */}
-      <div className="floating-mic-label">{isLive ? "Listening…" : "Idle"}</div>
+      <div className="floating-mic-label" data-tauri-drag-region onPointerDown={onDrag}>{isLive ? "Listening…" : "Idle"}</div>
     </div>
   );
 }

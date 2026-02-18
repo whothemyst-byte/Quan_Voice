@@ -45,14 +45,12 @@ export default function DashboardPage() {
   const [activated, setActivated] = useState(false);
   const [lastTranscript, setLastTranscript] = useState("");
   const [lastError, setLastError] = useState("");
-  const [debugInfo, setDebugInfo] = useState("");
   const [currentView, setCurrentView] = useState("dashboard");
 
   useEffect(() => {
     let unlistenStatus;
     let unlistenError;
     let unlistenTranscript;
-    let unlistenDebug;
 
     async function loadSettings() {
       try {
@@ -89,16 +87,6 @@ export default function DashboardPage() {
         setLastError("");
       });
 
-      unlistenDebug = await listen("transcription-debug", (event) => {
-        const payload = event.payload ?? {};
-        const rms = Number(payload.rms ?? 0);
-        const raw = String(payload.raw ?? "");
-        const cleaned = String(payload.cleaned ?? "");
-        const device = String(payload.device ?? "Unknown input");
-        setDebugInfo(
-          `Device: ${device} | RMS: ${rms.toFixed(4)} | Raw: ${raw || "(empty)"} | Cleaned: ${cleaned || "(empty)"}`
-        );
-      });
     }
 
     wireEvents();
@@ -108,7 +96,6 @@ export default function DashboardPage() {
       if (unlistenStatus) unlistenStatus();
       if (unlistenError) unlistenError();
       if (unlistenTranscript) unlistenTranscript();
-      if (unlistenDebug) unlistenDebug();
     };
   }, []);
 
@@ -260,8 +247,7 @@ export default function DashboardPage() {
               )}
             </section>
 
-            {/* Debug / Error  */}
-            {debugInfo && <div className="debug-bar">{debugInfo}</div>}
+            {/* Error */}
             {lastError && <div className="error-banner">Error: {lastError}</div>}
 
             <StatusIndicator state={status} />

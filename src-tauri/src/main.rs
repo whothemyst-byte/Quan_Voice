@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex as StdMutex,
@@ -161,8 +163,6 @@ async fn register_hotkey(app: tauri::AppHandle, state: State<'_, AppState>) -> R
                         Ok(run) => {
                             let _ = app.emit("transcription-result", &run.cleaned);
                             let _ = app.emit_to("floating", "transcription-result", &run.cleaned);
-                            let _ = app.emit("transcription-debug", &run);
-                            let _ = app.emit_to("floating", "transcription-debug", &run);
                         }
                         Err(err) => {
                             let _ = app.emit("hotkey-error", &err);
@@ -212,6 +212,16 @@ fn hide_floating_widget(app: tauri::AppHandle) -> Result<(), String> {
     };
 
     window.hide().map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn start_floating_drag(app: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("floating") else {
+        return Err("floating window not found".to_string());
+    };
+
+    window.start_dragging().map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -293,6 +303,7 @@ fn main() {
             unregister_hotkey,
             show_floating_widget,
             hide_floating_widget,
+            start_floating_drag,
             get_live_state,
             set_live_ready,
             list_input_devices,

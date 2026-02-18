@@ -776,8 +776,12 @@ body {
 .floating-drag-handle {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 100%;
   gap: 2px;
-  padding: 0 1px;
+  padding: 0 2px;
   opacity: 0.25;
   transition: opacity var(--transition);
 }

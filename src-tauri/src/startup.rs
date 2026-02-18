@@ -2,6 +2,13 @@ use std::env;
 use std::process::Command;
 
 use thiserror::Error;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 const RUN_KEY_PATH: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE_NAME: &str = "Quan Voice";
 
@@ -17,18 +24,21 @@ pub fn sync_startup(enabled: bool) -> Result<(), StartupError> {
     if enabled {
         let exe = env::current_exe().map_err(|_| StartupError::MissingExecutable)?;
         let value = format!("\"{}\"", exe.display());
-        let output = Command::new("reg")
-            .args([
-                "add",
-                RUN_KEY_PATH,
-                "/v",
-                VALUE_NAME,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &value,
-                "/f",
-            ])
+        let mut command = Command::new("reg");
+        command.args([
+            "add",
+            RUN_KEY_PATH,
+            "/v",
+            VALUE_NAME,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &value,
+            "/f",
+        ]);
+        hide_command_window(&mut command);
+
+        let output = command
             .output()
             .map_err(|err| StartupError::RegistryCommand(err.to_string()))?;
 
@@ -39,8 +49,11 @@ pub fn sync_startup(enabled: bool) -> Result<(), StartupError> {
         return Ok(());
     }
 
-    let output = Command::new("reg")
-        .args(["delete", RUN_KEY_PATH, "/v", VALUE_NAME, "/f"])
+    let mut command = Command::new("reg");
+    command.args(["delete", RUN_KEY_PATH, "/v", VALUE_NAME, "/f"]);
+    hide_command_window(&mut command);
+
+    let output = command
         .output()
         .map_err(|err| StartupError::RegistryCommand(err.to_string()))?;
 
@@ -54,4 +67,11 @@ pub fn sync_startup(enabled: bool) -> Result<(), StartupError> {
         }
     }
     Ok(())
+}
+
+fn hide_command_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }

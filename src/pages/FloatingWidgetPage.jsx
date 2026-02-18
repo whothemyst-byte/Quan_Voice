@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import FloatingMicWidget from "../components/FloatingMicWidget.jsx";
 
 export default function FloatingWidgetPage() {
@@ -27,12 +26,14 @@ export default function FloatingWidgetPage() {
     pollTimer = setInterval(async () => {
       try {
         const state = await invoke("get_live_state");
-        setStatus(String(state?.status ?? "Idle"));
-        setInputLevel(Number(state?.input_level ?? 0));
+        const nextStatus = String(state?.status ?? "Idle");
+        const nextLevel = Number(state?.input_level ?? 0);
+        setStatus((prev) => (prev === nextStatus ? prev : nextStatus));
+        setInputLevel((prev) => (Math.abs(prev - nextLevel) < 0.001 ? prev : nextLevel));
       } catch {
         // ignore poll errors
       }
-    }, 60);
+    }, 220);
 
     return () => {
       if (unlistenStatus) unlistenStatus();
@@ -41,14 +42,12 @@ export default function FloatingWidgetPage() {
     };
   }, []);
 
-  async function handleDrag(event) {
-    if (event.button !== 0) return;
+  function handleDrag(event) {
+    if (typeof event.button === "number" && event.button !== 0) return;
     event.preventDefault();
-    try {
-      await getCurrentWindow().startDragging();
-    } catch {
+    void invoke("start_floating_drag").catch(() => {
       // fallback: ignore if startDragging not available
-    }
+    });
   }
 
   return (
