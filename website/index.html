@@ -3,83 +3,117 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quan Voice | Download for Windows</title>
+    <title>Quan Voice | Offline Voice Typing for Windows</title>
     <meta
       name="description"
-      content="Download Quan Voice for Windows and install in minutes. Private, offline-first voice typing with push-to-talk workflow."
+      content="Quan Voice is an offline-first voice typing desktop app for Windows. Push-to-talk dictation, floating widget, and private local workflow."
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" src="https://unpkg.com/@splinetool/viewer/build/spline-viewer.js"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="bg-grid" aria-hidden="true"></div>
-    <div class="bg-glow bg-glow-left" aria-hidden="true"></div>
-    <div class="bg-glow bg-glow-right" aria-hidden="true"></div>
+    <div class="aurora aurora-left" aria-hidden="true"></div>
+    <div class="aurora aurora-right" aria-hidden="true"></div>
+    <div class="noise" aria-hidden="true"></div>
 
-    <header class="topbar">
+    <header class="topbar shell">
       <div class="brand">
-        <span class="brand-mark">QV</span>
+        <span class="brand-mark">Q</span>
         <span class="brand-name">Quan Voice</span>
       </div>
-      <a class="btn btn-ghost" href="https://github.com/whothemyst-byte/Quan_Voice" target="_blank" rel="noreferrer">GitHub</a>
+      <nav class="top-actions">
+        <a class="btn btn-ghost" href="https://github.com/whothemyst-byte/Quan_Voice" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="btn btn-soft" href="https://github.com/whothemyst-byte/Quan_Voice/releases">Releases</a>
+      </nav>
     </header>
 
-    <main class="container">
-      <section class="hero card">
-        <p class="eyebrow">v0.1.0-beta</p>
-        <h1>Voice typing that stays local and fast.</h1>
-        <p class="subtitle">
-          Quan Voice brings push-to-talk transcription to your desktop with an interface designed for focus.
-          Download the latest beta build for Windows x64.
-        </p>
-        <div class="cta-row">
-          <a
-            class="btn btn-primary"
-            href="https://github.com/whothemyst-byte/Quan_Voice/releases/download/v0.1.0-beta/Quan%20Voice_0.1.0_x64-setup.exe"
-          >
-            Download .exe
-          </a>
-          <a
-            class="btn btn-secondary"
-            href="https://github.com/whothemyst-byte/Quan_Voice/releases/tag/v0.1.0-beta"
-            target="_blank"
-            rel="noreferrer"
-          >
-            View Release
-          </a>
-        </div>
-        <p class="hint">If direct download is unavailable, open the release page and use the latest installer asset.</p>
-      </section>
-
-      <section class="grid-2">
-        <article class="card feature">
-          <h2>Install in 5 steps</h2>
-          <ol>
-            <li>Download <code>Quan Voice_0.1.0_x64-setup.exe</code>.</li>
-            <li>Run the installer.</li>
-            <li>If SmartScreen appears, click <strong>More info</strong> then <strong>Run anyway</strong>.</li>
-            <li>Open Quan Voice from Start Menu.</li>
-            <li>Allow microphone access on first launch.</li>
-          </ol>
+    <main class="shell">
+      <section class="hero">
+        <article class="hero-copy">
+          <p class="kicker">Windows x64 Desktop App</p>
+          <h1>Talk. Release. Done.</h1>
+          <p class="lead">
+            Quan Voice brings offline-first voice typing to your desktop with a push-to-talk flow built for speed,
+            privacy, and focused work.
+          </p>
+          <div class="cta-row">
+            <a
+              class="btn btn-primary"
+              href="https://github.com/whothemyst-byte/Quan_Voice/raw/main/release/Quan%20Voice_0.1.0_x64-setup.exe"
+            >
+              Download Installer
+            </a>
+            <a class="btn btn-line" href="https://github.com/whothemyst-byte/Quan_Voice/blob/main/docs/RELEASE_NOTES_v1.0.0.md">
+              Read Release Notes
+            </a>
+          </div>
+          <p class="meta">Offline transcription pipeline after model setup. Requires internet only for first model download.</p>
         </article>
 
-        <article class="card feature">
-          <h2>Why Quan Voice</h2>
-          <ul>
-            <li>Offline-oriented transcription workflow</li>
-            <li>Minimal dashboard and floating mic widget</li>
-            <li>Configurable push-to-talk hotkey</li>
-            <li>Private-by-design desktop experience</li>
+        <article class="hero-3d">
+          <div class="hero-glass">
+            <spline-viewer
+              loading-anim-type="spinner-small-dark"
+              url="https://prod.spline.design/UWoeqiir20o49Dah/scene.splinecode"
+            ></spline-viewer>
+          </div>
+        </article>
+      </section>
+
+      <section class="stats">
+        <article class="stat-card">
+          <h3>Offline-First</h3>
+          <p>Local processing path designed for private desktop dictation sessions.</p>
+        </article>
+        <article class="stat-card">
+          <h3>Push-to-Talk</h3>
+          <p>Hold your key to record, release to inject text into active apps.</p>
+        </article>
+        <article class="stat-card">
+          <h3>Floating Widget</h3>
+          <p>Movable always-on-top mic pill with live status and input activity.</p>
+        </article>
+      </section>
+
+      <section class="showcase">
+        <article class="showcase-copy">
+          <p class="kicker">Built for Workflows</p>
+          <h2>Clean desktop UX with strong defaults.</h2>
+          <ul class="feature-list">
+            <li>Custom hotkey selection</li>
+            <li>Input-device chooser with safe fallback</li>
+            <li>Model integrity checks on setup</li>
+            <li>Windows startup toggle</li>
           </ul>
         </article>
+        <article class="showcase-3d">
+          <spline-viewer
+            loading-anim-type="spinner-small-dark"
+            url="https://prod.spline.design/U9O6K7fXziMEU7Wu/scene.splinecode"
+          ></spline-viewer>
+        </article>
       </section>
 
-      <section class="card note">
-        <h2>Beta notice</h2>
-        <p>
-          This release is a beta. You may see occasional bugs or UI rough edges. Report issues on GitHub with your Windows version,
-          steps to reproduce, and screenshots.
-        </p>
+      <section class="install">
+        <h2>Install in under 3 minutes</h2>
+        <ol>
+          <li>Download <code>Quan Voice_0.1.0_x64-setup.exe</code>.</li>
+          <li>Run installer and continue through SmartScreen if prompted.</li>
+          <li>Launch Quan Voice and select your microphone in Settings.</li>
+          <li>Activate and start dictating with your push-to-talk key.</li>
+        </ol>
       </section>
     </main>
+
+    <footer class="footer shell">
+      <p>Quan Voice © 2026</p>
+      <a href="https://github.com/whothemyst-byte/Quan_Voice/issues" target="_blank" rel="noreferrer">Report an issue</a>
+    </footer>
   </body>
 </html>
