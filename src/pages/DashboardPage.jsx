@@ -7,6 +7,8 @@ import SettingsPage from "./SettingsPage.jsx";
 const fallbackSettings = {
   push_to_talk_key: "RightCtrl",
   auto_punctuation: true,
+  latency_mode: true,
+  online_mode: false,
   model: "tiny.en",
   start_with_windows: false,
   input_device: "Default",
@@ -18,6 +20,13 @@ const initialProgress = {
   total_bytes: null,
   progress_percent: 0,
 };
+
+const funInstantNotes = [
+  "Text landed instantly.",
+  "Great flow. Keep speaking.",
+  "Voice captured with low latency.",
+  "Nice. Dictation is in sync.",
+];
 
 function formatBytes(bytes) {
   if (typeof bytes !== "number" || bytes < 0) return "0 B";
@@ -77,12 +86,33 @@ export default function DashboardPage() {
   const [activated, setActivated] = useState(false);
   const [lastTranscript, setLastTranscript] = useState("");
   const [lastError, setLastError] = useState("");
+  const [modeNotification, setModeNotification] = useState("");
+  const [notifications, setNotifications] = useState([]);
   const [currentView, setCurrentView] = useState("dashboard");
+
+  function pushNotification(message, tone = "info") {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setNotifications((prev) => [...prev, { id, message, tone }].slice(-5));
+  }
+
+  function dismissNotification(id) {
+    setNotifications((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  useEffect(() => {
+    if (notifications.length === 0) return;
+    const timer = setTimeout(() => {
+      const first = notifications[0];
+      if (first) dismissNotification(first.id);
+    }, 3200);
+    return () => clearTimeout(timer);
+  }, [notifications]);
 
   useEffect(() => {
     let unlistenStatus;
     let unlistenError;
     let unlistenTranscript;
+    let unlistenModeNotice;
 
     async function loadSettings() {
       try {
@@ -105,6 +135,14 @@ export default function DashboardPage() {
             nextSettings = { ...nextSettings, input_device: "Default" };
           }
         }
+        if (nextSettings.online_mode) {
+          const online = await invoke("check_assemblyai_connectivity");
+          if (!online) {
+            nextSettings = { ...nextSettings, online_mode: false };
+            setModeNotification("Internet is off or company key is not configured. Switched to offline mode.");
+            pushNotification("Internet is off or company key is not configured. Switched to offline mode.", "warn");
+          }
+        }
         if (nextSettings !== loaded) {
           await invoke("update_settings", { settings: nextSettings });
         }
@@ -117,18 +155,27 @@ export default function DashboardPage() {
 
     async function wireEvents() {
       unlistenStatus = await listen("hotkey-status", (event) => {
-        setStatus(String(event.payload ?? "Idle"));
+        setStatus(String(event.payload ?? "Inactive"));
       });
 
       unlistenError = await listen("hotkey-error", (event) => {
         const message = String(event.payload ?? "Unknown hotkey error");
         setSaveState(`error:${message}`);
         setLastError(message);
+        pushNotification(`Error: ${message}`, "error");
       });
 
       unlistenTranscript = await listen("transcription-result", (event) => {
         setLastTranscript(String(event.payload ?? ""));
         setLastError("");
+        const idx = Math.floor(Math.random() * funInstantNotes.length);
+        pushNotification(funInstantNotes[idx], "success");
+      });
+
+      unlistenModeNotice = await listen("mode-notification", (event) => {
+        const message = String(event.payload ?? "");
+        setModeNotification(message);
+        pushNotification(message, "warn");
       });
 
     }
@@ -140,6 +187,7 @@ export default function DashboardPage() {
       if (unlistenStatus) unlistenStatus();
       if (unlistenError) unlistenError();
       if (unlistenTranscript) unlistenTranscript();
+      if (unlistenModeNotice) unlistenModeNotice();
     };
   }, []);
 
@@ -189,9 +237,12 @@ export default function DashboardPage() {
       }
       setPersistedModel(settings.model);
       setSaveState("saved");
+      const mode = settings.online_mode ? "Online (AssemblyAI)" : "Offline (Local)";
+      pushNotification(`Settings saved. Engine: ${mode}.`, "success");
       if (activated) {
         await invoke("register_hotkey");
         setStatus("Ready");
+        pushNotification("Hotkey mapping refreshed.", "info");
       }
     } catch (error) {
       setSaveState(`error:${String(error)}`);
@@ -214,7 +265,17 @@ export default function DashboardPage() {
   async function handleToggleActivation() {
     try {
       if (!activated) {
-        await invoke("update_settings", { settings });
+        let settingsToApply = settings;
+        if (settings.online_mode) {
+          const online = await invoke("check_assemblyai_connectivity");
+          if (!online) {
+            settingsToApply = { ...settings, online_mode: false };
+            setSettings(settingsToApply);
+            setModeNotification("Internet is off or company key is not configured. Switched to offline mode.");
+            pushNotification("Internet is off or company key is not configured. Switched to offline mode.", "warn");
+          }
+        }
+        await invoke("update_settings", { settings: settingsToApply });
         await invoke("register_hotkey");
         await invoke("set_live_ready");
         await invoke("show_floating_widget");
@@ -222,6 +283,7 @@ export default function DashboardPage() {
         setStatus("Ready");
         setSaveState("saved");
         setLastError("");
+        pushNotification("Quan Voice activated. Ready to dictate.", "success");
         return;
       }
 
@@ -229,13 +291,14 @@ export default function DashboardPage() {
       await invoke("hide_floating_widget");
       setActivated(false);
       setStatus("Inactive");
+      pushNotification("Quan Voice deactivated.", "info");
     } catch (error) {
       setSaveState(`error:${String(error)}`);
     }
   }
 
   const isListening = status === "Listening";
-  const statusLabel = isListening ? "Listening…" : activated ? "Ready to Listen" : "Inactive";
+  const statusLabel = isListening ? "Listening..." : activated ? "Ready to Listen" : "Inactive";
   const downloadPercent = Math.max(0, Math.min(100, downloadProgress?.progress_percent ?? 0));
   const downloaded = formatBytes(downloadProgress?.downloaded_bytes ?? 0);
   const total =
@@ -245,6 +308,18 @@ export default function DashboardPage() {
 
   return (
     <div className="app-shell">
+      <div className="notice-stack" aria-live="polite" aria-atomic="true">
+        {notifications.map((note) => (
+          <div
+            key={note.id}
+            className={`notice-item ${note.tone}`}
+            role="status"
+            onClick={() => dismissNotification(note.id)}
+          >
+            {note.message}
+          </div>
+        ))}
+      </div>
       {/* ── Sidebar ──────────────────────────────── */}
       <aside className="sidebar">
         <div className="sidebar-brand">
@@ -324,8 +399,10 @@ export default function DashboardPage() {
               <div className="stat-card">
                 <div className="stat-icon privacy"><LockSvg /></div>
                 <div className="stat-info">
-                  <span className="stat-label">Status</span>
-                  <span className="stat-value">Offline · Private</span>
+                  <span className="stat-label">Engine</span>
+                  <span className="stat-value">
+                    {settings.online_mode ? "Online · AssemblyAI" : "Offline · Local"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -348,6 +425,7 @@ export default function DashboardPage() {
 
             {/* Error */}
             {lastError && <div className="error-banner">Error: {lastError}</div>}
+            {modeNotification && <div className="error-banner">{modeNotification}</div>}
 
             <StatusIndicator state={status} />
           </>

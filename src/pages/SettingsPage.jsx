@@ -75,6 +75,24 @@ export default function SettingsPage({
           <span>Auto punctuation</span>
         </label>
 
+        <label className="field checkbox">
+          <input
+            type="checkbox"
+            checked={settings.latency_mode ?? true}
+            onChange={(event) => onChange("latency_mode", event.target.checked)}
+          />
+          <span>Latency mode (force tiny.en)</span>
+        </label>
+
+        <label className="field checkbox">
+          <input
+            type="checkbox"
+            checked={settings.online_mode ?? false}
+            onChange={(event) => onChange("online_mode", event.target.checked)}
+          />
+          <span>Online mode (AssemblyAI)</span>
+        </label>
+
         <label className="field">
           <span>Model</span>
           <select

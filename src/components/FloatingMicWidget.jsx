@@ -7,6 +7,7 @@ const BAR_COUNT = 5;
 export default function FloatingMicWidget({ status, level, onDrag }) {
   const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
   const isLive = status === "Listening";
+  const label = isLive ? "Listening..." : "Ready";
 
   return (
     <div
@@ -37,7 +38,7 @@ export default function FloatingMicWidget({ status, level, onDrag }) {
       </div>
 
       {/* Label */}
-      <div className="floating-mic-label" data-tauri-drag-region onPointerDown={onDrag}>{isLive ? "Listening…" : "Idle"}</div>
+      <div className="floating-mic-label" data-tauri-drag-region onPointerDown={onDrag}>{label}</div>
     </div>
   );
 }

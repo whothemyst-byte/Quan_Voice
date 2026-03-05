@@ -1,11 +1,14 @@
 use std::{
     fs,
+    mem,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, Host};
 use thiserror::Error;
+
+const DEFAULT_FAST_AUDIO_POSTPROCESS: bool = true;
 
 #[derive(Debug, Error)]
 pub enum AudioError {
@@ -162,19 +165,25 @@ impl AudioRecorder {
             .clone()
             .ok_or(AudioError::NotRecording)?;
 
-        let input_samples = self
-            .buffer
-            .take()
-            .ok_or(AudioError::NotRecording)?
-            .lock()
-            .map_err(|_| AudioError::Stream("audio buffer lock poisoned".to_string()))?
-            .clone();
+        let input_samples = {
+            let buffer = self.buffer.take().ok_or(AudioError::NotRecording)?;
+            let mut guard = buffer
+                .lock()
+                .map_err(|_| AudioError::Stream("audio buffer lock poisoned".to_string()))?;
+            mem::take(&mut *guard)
+        };
         self.input_level = None;
 
         let mono = to_mono(&input_samples, self.source_channels);
         let resampled = resample_linear(&mono, self.source_sample_rate, 16_000);
-        let normalized = normalize_audio(&resampled);
-        write_wav(path.as_path(), &normalized)?;
+        let final_samples = if is_fast_audio_postprocess_enabled() {
+            // Speed-first path: keep a single lightweight trim pass to cut silence-heavy latency tails.
+            trim_silence(&resampled, 16_000, 0.015, 80)
+        } else {
+            let normalized = normalize_audio(&resampled);
+            trim_silence(&normalized, 16_000, 0.01, 120)
+        };
+        write_wav(path.as_path(), &final_samples)?;
 
         Ok(path)
     }
@@ -210,6 +219,27 @@ impl AudioRecorder {
         names.sort();
         names.dedup();
         Ok(names)
+    }
+
+    pub fn preview_clip_16k(&self, max_seconds: u32) -> Option<Vec<f32>> {
+        if !self.recording {
+            return None;
+        }
+        let buffer = self.buffer.as_ref()?;
+        let samples = buffer.lock().ok()?.clone();
+        if samples.is_empty() {
+            return None;
+        }
+
+        let mono = to_mono(&samples, self.source_channels);
+        let mut resampled = resample_linear(&mono, self.source_sample_rate, 16_000);
+        let max_samples = (max_seconds as usize).saturating_mul(16_000);
+        if max_samples > 0 && resampled.len() > max_samples {
+            let start = resampled.len() - max_samples;
+            resampled = resampled[start..].to_vec();
+        }
+
+        Some(resampled)
     }
 }
 
@@ -417,4 +447,29 @@ fn normalize_audio(samples: &[f32]) -> Vec<f32> {
         .iter()
         .map(|s| (s * gain).clamp(-1.0, 1.0))
         .collect()
+}
+
+fn trim_silence(samples: &[f32], sample_rate: u32, threshold: f32, padding_ms: u32) -> Vec<f32> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    let first = samples.iter().position(|s| s.abs() >= threshold);
+    let last = samples.iter().rposition(|s| s.abs() >= threshold);
+
+    let (Some(first), Some(last)) = (first, last) else {
+        return samples.to_vec();
+    };
+
+    let padding = ((sample_rate as f32) * (padding_ms as f32 / 1000.0)).round() as usize;
+    let start = first.saturating_sub(padding);
+    let end_exclusive = (last + 1 + padding).min(samples.len());
+    samples[start..end_exclusive].to_vec()
+}
+
+fn is_fast_audio_postprocess_enabled() -> bool {
+    match std::env::var("QUAN_VOICE_AUDIO_FAST") {
+        Ok(value) => !matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off"),
+        Err(_) => DEFAULT_FAST_AUDIO_POSTPROCESS,
+    }
 }

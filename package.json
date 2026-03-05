@@ -1,6 +1,6 @@
 {
   "name": "quan-voice",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,10 @@
     "test": "npm run test:rust",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri:dev": "tauri dev",
+    "tauri:dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/dev-stop.ps1",
+    "tauri:dev:clean": "powershell -ExecutionPolicy Bypass -File scripts/dev-start.ps1",
+    "latency:summary": "powershell -ExecutionPolicy Bypass -File scripts/latency-summary.ps1",
+    "latency:gate": "powershell -ExecutionPolicy Bypass -File scripts/latency-gate.ps1",
     "tauri:build": "tauri build"
   },
   "dependencies": {

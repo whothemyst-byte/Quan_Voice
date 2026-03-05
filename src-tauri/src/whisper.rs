@@ -1,12 +1,15 @@
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::Write,
     path::{Path, PathBuf},
+    process::Stdio,
 };
 
 use futures_util::StreamExt;
 use serde::Serialize;
 use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as AsyncCommand;
 
 #[cfg(windows)]
@@ -91,6 +94,13 @@ pub struct AvailableModel {
     pub perf_warning: &'static str,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DecodeResult {
+    pub text: String,
+    pub first_token_ts: Option<u128>,
+    pub final_text_ts: u128,
+}
+
 #[derive(Debug, Error)]
 pub enum WhisperError {
     #[error("io error: {0}")]
@@ -108,6 +118,12 @@ pub enum WhisperError {
 pub struct WhisperEngine {
     models_root: PathBuf,
     binary_path: PathBuf,
+    server_binary_path: PathBuf,
+    server_url: String,
+    server_started: bool,
+    server_model_id: Option<String>,
+    server_disabled: bool,
+    warmed_models: HashSet<String>,
 }
 
 impl WhisperEngine {
@@ -117,9 +133,16 @@ impl WhisperEngine {
         root.push("models");
 
         let binary_path = resolve_whisper_binary_path();
+        let server_binary_path = resolve_whisper_server_binary_path(&binary_path);
         Self {
             models_root: root,
             binary_path,
+            server_binary_path,
+            server_url: "http://127.0.0.1:8188/inference".to_string(),
+            server_started: false,
+            server_model_id: None,
+            server_disabled: false,
+            warmed_models: HashSet::new(),
         }
     }
 
@@ -143,6 +166,7 @@ impl WhisperEngine {
                 total_bytes: Some(1),
                 progress_percent: 100.0,
             })?;
+            self.maybe_warm_model(spec).await;
             return Ok(true);
         }
 
@@ -162,14 +186,15 @@ impl WhisperEngine {
             &mut on_progress,
         )
             .await?;
+        self.maybe_warm_model(spec).await;
         Ok(true)
     }
 
     pub async fn transcribe(
-        &self,
+        &mut self,
         wav_path: &std::path::Path,
         model_id: &str,
-    ) -> Result<String, WhisperError> {
+    ) -> Result<DecodeResult, WhisperError> {
         let spec = phase_one_model_spec(model_id).ok_or_else(|| {
             WhisperError::UnsupportedModel(model_id.to_string())
         })?;
@@ -187,7 +212,46 @@ impl WhisperEngine {
             ));
         }
 
+        if self.should_use_server() {
+            let _ = self.ensure_server_started(spec.id, model_path.as_path()).await;
+            if self.server_started && self.server_model_id.as_deref() == Some(spec.id) {
+                if let Ok(result) = self.transcribe_with_server(wav_path).await {
+                    return Ok(result);
+                }
+            }
+        }
+
         self.transcribe_with_binary(wav_path, model_path.as_path()).await
+    }
+
+    pub async fn transcribe_preview_samples(
+        &self,
+        samples_16k: &[f32],
+        model_id: &str,
+    ) -> Result<DecodeResult, WhisperError> {
+        let spec = phase_one_model_spec(model_id).ok_or_else(|| {
+            WhisperError::UnsupportedModel(model_id.to_string())
+        })?;
+        let model_path = self.model_path_for(spec);
+
+        if !model_path.exists() {
+            return Err(WhisperError::TranscriptionFailed(
+                "missing whisper model".to_string(),
+            ));
+        }
+
+        if !self.binary_path.exists() {
+            return Err(WhisperError::MissingBinary(
+                self.binary_path.display().to_string(),
+            ));
+        }
+
+        let temp_wav = write_temp_wav_16k(samples_16k)?;
+        let result = self
+            .transcribe_with_binary(temp_wav.as_path(), model_path.as_path())
+            .await;
+        let _ = fs::remove_file(temp_wav);
+        result
     }
 
     async fn download_model<F>(
@@ -275,10 +339,8 @@ impl WhisperEngine {
         &self,
         wav_path: &Path,
         model_path: &Path,
-    ) -> Result<String, WhisperError> {
-        let output_prefix = wav_path.with_file_name("transcript");
-        let output_txt = output_prefix.with_extension("txt");
-        let _ = fs::remove_file(&output_txt);
+    ) -> Result<DecodeResult, WhisperError> {
+        let threads = default_whisper_threads();
 
         let mut command = AsyncCommand::new(&self.binary_path);
         command
@@ -288,22 +350,54 @@ impl WhisperEngine {
             .arg(wav_path)
             .arg("-l")
             .arg("en")
+            .arg("-t")
+            .arg(threads.to_string())
+            .arg("-bo")
+            .arg("1")
+            .arg("-bs")
+            .arg("1")
+            .arg("-nf")
             .arg("-nt")
             .arg("--suppress-nst")
             .arg("--temperature")
             .arg("0")
             .arg("--no-speech-thold")
-            .arg("0.7")
+            .arg("0.45")
             .arg("--logprob-thold")
             .arg("-1.0")
-            .arg("-otxt")
-            .arg("-of")
-            .arg(&output_prefix);
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         hide_async_command_window(&mut command);
 
-        let output = command
-            .output()
+        let mut child = command
+            .spawn()
+            .map_err(|err| WhisperError::TranscriptionFailed(err.to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| WhisperError::TranscriptionFailed("missing whisper stdout pipe".to_string()))?;
+        let mut lines = BufReader::new(stdout).lines();
+        let mut stdout_collected = String::new();
+        let mut first_token_ts: Option<u128> = None;
+
+        while let Some(line) = lines
+            .next_line()
+            .await
+            .map_err(|err| WhisperError::TranscriptionFailed(err.to_string()))?
+        {
+            stdout_collected.push_str(&line);
+            stdout_collected.push('\n');
+            if first_token_ts.is_none() {
+                let fragment = extract_line_text(&line);
+                if !fragment.is_empty() {
+                    first_token_ts = Some(epoch_ms());
+                }
+            }
+        }
+
+        let output = child
+            .wait_with_output()
             .await
             .map_err(|err| WhisperError::TranscriptionFailed(err.to_string()))?;
 
@@ -316,13 +410,168 @@ impl WhisperEngine {
             }));
         }
 
-        if output_txt.exists() {
-            let text = fs::read_to_string(&output_txt)?;
-            return Ok(text.trim().to_string());
+        let text = extract_transcript_from_stdout(&stdout_collected);
+        let final_text_ts = epoch_ms();
+        Ok(DecodeResult {
+            text,
+            first_token_ts: first_token_ts.or(Some(final_text_ts)),
+            final_text_ts,
+        })
+    }
+
+    async fn transcribe_with_server(&self, wav_path: &Path) -> Result<DecodeResult, WhisperError> {
+        #[derive(serde::Deserialize)]
+        struct ServerResp {
+            text: Option<String>,
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(extract_transcript_from_stdout(&stdout))
+        let started = epoch_ms();
+        let form = reqwest::multipart::Form::new()
+            .file("file", wav_path)
+            .await
+            .map_err(|err| WhisperError::TranscriptionFailed(format!("multipart file error: {err}")))?
+            .text("temperature", "0.0")
+            .text("temperature_inc", "0.0")
+            .text("response_format", "json")
+            .text("language", "en");
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&self.server_url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|err| WhisperError::TranscriptionFailed(format!("server request failed: {err}")))?;
+
+        if !response.status().is_success() {
+            return Err(WhisperError::TranscriptionFailed(format!(
+                "server returned status {}",
+                response.status()
+            )));
+        }
+
+        let now = epoch_ms();
+        let body = response.text().await.unwrap_or_default();
+        let parsed: Result<ServerResp, _> = serde_json::from_str(&body);
+        let text = parsed.ok().and_then(|payload| payload.text).unwrap_or_default();
+
+        Ok(DecodeResult {
+            text,
+            first_token_ts: Some(now.max(started)),
+            final_text_ts: now,
+        })
+    }
+
+    async fn ensure_server_started(&mut self, model_id: &str, model_path: &Path) -> Result<(), WhisperError> {
+        if self.server_disabled {
+            return Err(WhisperError::TranscriptionFailed(
+                "whisper-server disabled after startup failure".to_string(),
+            ));
+        }
+
+        if self.server_started && self.server_model_id.as_deref() == Some(model_id) {
+            if self.server_health().await {
+                return Ok(());
+            }
+            self.server_started = false;
+        }
+
+        if !self.server_binary_path.exists() {
+            return Err(WhisperError::MissingBinary(
+                self.server_binary_path.display().to_string(),
+            ));
+        }
+
+        let model = model_path
+            .to_str()
+            .ok_or_else(|| WhisperError::TranscriptionFailed("invalid model path".to_string()))?;
+        let mut command = AsyncCommand::new(&self.server_binary_path);
+        command
+            .arg("-m")
+            .arg(model)
+            .arg("-l")
+            .arg("en")
+            .arg("-nt")
+            .arg("-nf")
+            .arg("-bo")
+            .arg("1")
+            .arg("-bs")
+            .arg("1")
+            .arg("-sns")
+            .arg("-nth")
+            .arg("0.45")
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg("8188")
+            .arg("-t")
+            .arg(default_whisper_threads().to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        hide_async_command_window(&mut command);
+        let _child = command
+            .spawn()
+            .map_err(|err| WhisperError::TranscriptionFailed(format!("failed to start server: {err}")))?;
+
+        for _ in 0..6 {
+            if self.server_health().await {
+                self.server_started = true;
+                self.server_model_id = Some(model_id.to_string());
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        }
+
+        self.server_disabled = true;
+        Err(WhisperError::TranscriptionFailed(
+            "whisper-server did not become healthy in time".to_string(),
+        ))
+    }
+
+    async fn server_health(&self) -> bool {
+        let health_url = self.server_url.trim_end_matches("/inference").to_string();
+        let client = reqwest::Client::new();
+        client
+            .get(health_url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+
+    fn should_use_server(&self) -> bool {
+        if self.server_disabled {
+            return false;
+        }
+        match std::env::var("QUAN_VOICE_USE_SERVER") {
+            Ok(value) => !matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off"),
+            Err(_) => true,
+        }
+    }
+
+    async fn maybe_warm_model(&mut self, spec: &ModelSpec) {
+        if self.warmed_models.contains(spec.id) {
+            return;
+        }
+        if !self.binary_path.exists() {
+            return;
+        }
+
+        let model_path = self.model_path_for(spec);
+        if !model_path.exists() {
+            return;
+        }
+
+        let warmup_path = match write_warmup_wav() {
+            Ok(path) => path,
+            Err(_) => return,
+        };
+
+        let _ = self
+            .transcribe_with_binary(warmup_path.as_path(), model_path.as_path())
+            .await;
+        let _ = fs::remove_file(warmup_path);
+        self.warmed_models.insert(spec.id.to_string());
     }
 }
 
@@ -404,6 +653,65 @@ fn model_sha256_url(spec: &ModelSpec) -> String {
     format!("{MODEL_SOURCE_ROOT}/{}.sha256", spec.filename)
 }
 
+fn default_whisper_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1).clamp(2, 12))
+        .unwrap_or(4)
+}
+
+fn write_warmup_wav() -> Result<PathBuf, WhisperError> {
+    let mut path = std::env::temp_dir();
+    path.push("quan_voice");
+    fs::create_dir_all(&path)?;
+    path.push("warmup.wav");
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec)
+        .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    for _ in 0..3200 {
+        writer
+            .write_sample(0_i16)
+            .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    }
+    writer
+        .finalize()
+        .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    Ok(path)
+}
+
+fn write_temp_wav_16k(samples: &[f32]) -> Result<PathBuf, WhisperError> {
+    let mut path = std::env::temp_dir();
+    path.push("quan_voice");
+    fs::create_dir_all(&path)?;
+    let ts = epoch_ms();
+    path.push(format!("preview_{ts}.wav"));
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec)
+        .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let pcm = (clamped * i16::MAX as f32) as i16;
+        writer
+            .write_sample(pcm)
+            .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    }
+    writer
+        .finalize()
+        .map_err(|err| WhisperError::Io(std::io::Error::other(err.to_string())))?;
+    Ok(path)
+}
+
 fn resolve_whisper_binary_path() -> PathBuf {
     if let Ok(from_env) = std::env::var("QUAN_VOICE_WHISPER_BIN") {
         let from_env = PathBuf::from(from_env);
@@ -438,26 +746,57 @@ fn resolve_whisper_binary_path() -> PathBuf {
     local.join("main.exe")
 }
 
+fn resolve_whisper_server_binary_path(binary_path: &Path) -> PathBuf {
+    if let Some(dir) = binary_path.parent() {
+        let server = dir.join("whisper-server.exe");
+        if server.exists() {
+            return server;
+        }
+    }
+
+    let mut local = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    local.push("QuanVoice");
+    local.push("whisper");
+    local.push("whisper-server.exe");
+    local
+}
+
 fn extract_transcript_from_stdout(stdout: &str) -> String {
     let mut parts = Vec::new();
     for line in stdout.lines() {
-        let text = line.trim();
-        if text.is_empty() {
-            continue;
-        }
-
-        let stripped = if let Some((_, right)) = text.rsplit_once(']') {
-            right.trim()
-        } else {
-            text
-        };
-
-        if !stripped.is_empty() && !stripped.starts_with("whisper_") {
-            parts.push(stripped.to_string());
+        let fragment = extract_line_text(line);
+        if !fragment.is_empty() {
+            parts.push(fragment.to_string());
         }
     }
 
     parts.join(" ").trim().to_string()
+}
+
+fn extract_line_text(line: &str) -> &str {
+    let text = line.trim();
+    if text.is_empty() {
+        return "";
+    }
+
+    let stripped = if let Some((_, right)) = text.rsplit_once(']') {
+        right.trim()
+    } else {
+        text
+    };
+
+    if stripped.is_empty() || stripped.starts_with("whisper_") {
+        ""
+    } else {
+        stripped
+    }
+}
+
+fn epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 fn file_sha256_hex(path: &Path) -> Result<String, WhisperError> {
@@ -565,3 +904,4 @@ mod tests {
         );
     }
 }
+

@@ -70,7 +70,7 @@ impl HotkeyManager {
                 }
 
                 was_down = is_down;
-                thread::sleep(Duration::from_millis(12));
+                thread::sleep(Duration::from_millis(8));
             }
         });
 

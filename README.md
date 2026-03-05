@@ -27,7 +27,7 @@ Core goals:
 
 ## Installation (End Users)
 1. Download the installer from release assets:
-   - `Quan Voice_0.1.0_x64-setup.exe`
+   - `Quan Voice_0.2.0_x64-setup.exe`
 2. Run the installer.
 3. If SmartScreen appears, click `More info` -> `Run anyway`.
 4. Launch Quan Voice and complete first-time model setup.

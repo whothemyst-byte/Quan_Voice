@@ -3,7 +3,7 @@ use std::mem::size_of;
 use thiserror::Error;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    VK_RETURN, VK_TAB,
+    VK_BACK, VK_RETURN, VK_TAB,
 };
 
 #[derive(Debug, Error)]
@@ -57,6 +57,12 @@ fn build_inputs(text: &str) -> Vec<INPUT> {
         if ch == '\t' {
             saw_cr = false;
             push_tab(&mut inputs);
+            continue;
+        }
+
+        if ch == '\u{8}' {
+            saw_cr = false;
+            push_backspace(&mut inputs);
             continue;
         }
 
@@ -135,6 +141,33 @@ fn push_tab(inputs: &mut Vec<INPUT>) {
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: VK_TAB,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
+}
+
+fn push_backspace(inputs: &mut Vec<INPUT>) {
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_BACK,
+                wScan: 0,
+                dwFlags: 0,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_BACK,
                 wScan: 0,
                 dwFlags: KEYEVENTF_KEYUP,
                 time: 0,

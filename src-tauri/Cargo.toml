@@ -1,6 +1,6 @@
 [package]
 name = "quan-voice"
-version = "0.1.1"
+version = "0.2.0"
 description = "Quan Voice - Offline Voice. Unlimited Focus."
 authors = ["Quan Voice Team"]
 license = "Proprietary"
@@ -18,7 +18,7 @@ serde_json = "1"
 thiserror = "2"
 dirs = "6"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "process", "time"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart", "json"] }
 futures-util = "0.3"
 windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 cpal = "0.16"

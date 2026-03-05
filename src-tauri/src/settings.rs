@@ -9,6 +9,8 @@ use thiserror::Error;
 pub struct AppSettings {
     pub push_to_talk_key: String,
     pub auto_punctuation: bool,
+    pub latency_mode: bool,
+    pub online_mode: bool,
     pub model: String,
     pub start_with_windows: bool,
     pub input_device: String,
@@ -19,6 +21,8 @@ impl Default for AppSettings {
         Self {
             push_to_talk_key: "RightCtrl".to_string(),
             auto_punctuation: true,
+            latency_mode: true,
+            online_mode: false,
             model: "tiny.en".to_string(),
             start_with_windows: false,
             input_device: "Default".to_string(),
@@ -116,12 +120,67 @@ pub mod text {
     pub fn clean_transcript(input: &str) -> String {
         input
             .replace('\r', "")
+            .replace('♪', " ")
+            .replace('♫', " ")
+            .replace('♬', " ")
+            .replace('♩', " ")
+            .replace("🎵", " ")
+            .replace("🎶", " ")
+            .replace("[MUSIC]", " ")
+            .replace("[music]", " ")
             .lines()
             .map(str::trim_end)
             .collect::<Vec<_>>()
             .join("\n")
             .trim()
             .to_string()
+    }
+
+    pub fn is_meaningful_transcript(input: &str) -> bool {
+        let text = input.trim();
+        if text.is_empty() {
+            return false;
+        }
+
+        text.chars().any(|ch| ch.is_alphanumeric())
+    }
+
+    pub fn should_reject_for_low_signal(input: &str, level_hint: f32) -> bool {
+        if !is_meaningful_transcript(input) {
+            return true;
+        }
+
+        let low_signal = level_hint < 0.012;
+        if !low_signal {
+            return false;
+        }
+
+        let normalized = input
+            .chars()
+            .map(|ch| {
+                if ch.is_alphanumeric() || ch.is_whitespace() {
+                    ch
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        matches!(
+            normalized.as_str(),
+            "you"
+                | "youre"
+                | "you are"
+                | "thank you"
+                | "thanks"
+                | "bye"
+                | "um"
+                | "hmm"
+        )
     }
 }
 
@@ -134,6 +193,8 @@ mod tests {
         let input = AppSettings {
             push_to_talk_key: "  ".to_string(),
             auto_punctuation: false,
+            latency_mode: true,
+            online_mode: false,
             model: "".to_string(),
             start_with_windows: false,
             input_device: " ".to_string(),
@@ -171,5 +232,25 @@ mod tests {
     fn clean_transcript_trims_lines_and_outer_whitespace() {
         let cleaned = text::clean_transcript("  hello  \r\nworld   \n\n");
         assert_eq!(cleaned, "hello\nworld");
+    }
+
+    #[test]
+    fn clean_transcript_removes_music_symbols() {
+        let cleaned = text::clean_transcript(" ♪  🎵  [MUSIC] hello ");
+        assert_eq!(cleaned, "hello");
+    }
+
+    #[test]
+    fn meaningful_transcript_requires_alnum() {
+        assert!(!text::is_meaningful_transcript("♪♪♪"));
+        assert!(!text::is_meaningful_transcript("..."));
+        assert!(text::is_meaningful_transcript("hello"));
+    }
+
+    #[test]
+    fn low_signal_hallucination_is_rejected() {
+        assert!(text::should_reject_for_low_signal("You", 0.005));
+        assert!(text::should_reject_for_low_signal("thank you", 0.004));
+        assert!(!text::should_reject_for_low_signal("hello world", 0.004));
     }
 }

@@ -14,7 +14,7 @@ export default function FloatingWidgetPage() {
 
     async function wireEvents() {
       unlistenStatus = await listen("hotkey-status", (event) => {
-        setStatus(String(event.payload ?? "Idle"));
+        setStatus(String(event.payload ?? "Inactive"));
       });
 
       unlistenLevel = await listen("input-level", (event) => {
@@ -26,7 +26,7 @@ export default function FloatingWidgetPage() {
     pollTimer = setInterval(async () => {
       try {
         const state = await invoke("get_live_state");
-        const nextStatus = String(state?.status ?? "Idle");
+        const nextStatus = String(state?.status ?? "Inactive");
         const nextLevel = Number(state?.input_level ?? 0);
         setStatus((prev) => (prev === nextStatus ? prev : nextStatus));
         setInputLevel((prev) => (Math.abs(prev - nextLevel) < 0.001 ? prev : nextLevel));
